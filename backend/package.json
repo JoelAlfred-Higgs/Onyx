@@ -1,7 +1,7 @@
 {
-  "name": "washguard-backend",
+  "name": "onyx-backend",
   "version": "1.0.0",
-  "description": "WashGuard Backend Engine for NFT Wash Trading Detection",
+  "description": "Onyx Backend Engine for NFT Wash Trading Detection",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

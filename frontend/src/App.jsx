@@ -326,6 +326,26 @@ export default function App() {
             </div>
           </div>
 
+          {(results.history_complete === false || results.total_transfers_found === 0) && (
+            <div
+              role="status"
+              style={{
+                marginBottom: '1.25rem',
+                padding: '0.75rem 1rem',
+                border: '1px solid rgba(234, 179, 8, 0.45)',
+                borderRadius: '6px',
+                color: '#854d0e',
+                background: 'rgba(234, 179, 8, 0.08)',
+                fontSize: '0.85rem',
+                lineHeight: '1.5'
+              }}
+            >
+              {results.note || (results.history_complete === false
+                ? 'Blockchain history is incomplete; this score uses only the transfers retrieved so far.'
+                : 'No NFT transfer activity was found for this token.')}
+            </div>
+          )}
+
           {/* AI Explanation Layer */}
           <div
             className="placeholder-section"

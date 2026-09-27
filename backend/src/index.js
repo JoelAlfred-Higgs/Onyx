@@ -14,12 +14,12 @@ app.use(express.json());
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'WashGuard API',
+    service: 'Onyx API',
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`[WashGuard Backend] Running on http://localhost:${PORT}`);
+  console.log(`[Onyx Backend] Running on http://localhost:${PORT}`);
 });

@@ -1,6 +1,6 @@
-# WashGuard — NFT Wash-Trading Risk Analyzer
+# Onyx — NFT Wash-Trading Risk Analyzer
 
-**WashGuard** is an online web application that analyzes Ethereum NFTs for patterns consistent with wash trading. It combines multi-source blockchain data (Alchemy, OpenSea, Etherscan) with a deterministic 0–100 scoring detection engine and a non-authoritative Gemini AI explanation layer.
+**Onyx** is an online web application that analyzes Ethereum NFTs for patterns consistent with wash trading. It combines multi-source blockchain data (Alchemy, OpenSea, Etherscan) with a deterministic 0–100 scoring detection engine and a non-authoritative Gemini AI explanation layer.
 
 ---
 
@@ -24,7 +24,7 @@
 ## 🏗️ Project Architecture
 
 ```
-washguard/
+onyx/
 ├── backend/
 │   ├── main.py               # FastAPI server entry point & POST /analyze pipeline
 │   ├── alchemy.py            # Alchemy Ethereum Mainnet transfer fetcher
@@ -95,4 +95,4 @@ Configure in `frontend/.env`:
 ---
 
 ## ⚖️ Legal & Heuristic Notice
-WashGuard provides a blockchain-pattern risk assessment based on on-chain heuristics. It does not establish trading intent, physical wallet ownership, or market manipulation with legal certainty.
+Onyx provides a blockchain-pattern risk assessment based on on-chain heuristics. It does not establish trading intent, physical wallet ownership, or market manipulation with legal certainty.

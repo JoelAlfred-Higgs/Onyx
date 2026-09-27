@@ -1,7 +1,17 @@
+import copy
 import os
 import re
+import time
+from collections import OrderedDict
+from typing import Any, Dict, Tuple
+
 import httpx
-from typing import List, Dict, Any, Optional
+
+MAX_TRANSFER_PAGES = 50
+TRANSFER_PAGE_SIZE = 1000
+TRANSFER_CACHE_TTL_SECONDS = 300
+TRANSFER_CACHE_MAX_ENTRIES = 128
+_transfer_cache: OrderedDict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = OrderedDict()
 
 def validate_ethereum_address(address: str) -> bool:
     """Validate 0x-prefixed 40-character hex Ethereum address."""
@@ -14,8 +24,7 @@ def validate_token_id(token_id: str) -> bool:
         return True
     if cleaned.startswith("0x") or cleaned.startswith("0X"):
         try:
-            int(cleaned, 16)
-            return True
+            return bool(cleaned[2:]) and int(cleaned[2:], 16) >= 0
         except ValueError:
             return False
     return False
@@ -28,58 +37,6 @@ def to_hex_token_id(token_id: str) -> str:
     if cleaned.startswith("0x") or cleaned.startswith("0X"):
         return hex(int(cleaned, 16))
     return cleaned
-
-def get_demo_normalized_transfers(contract_address: str, token_id: str) -> List[Dict[str, Any]]:
-    """
-    Realistic sample normalized transfers for fallback testing 
-    (e.g., when rate-limited or API key is missing during offline demo).
-    """
-    return [
-        {
-            "tx_hash": "0x3e18f2d59218d6e9f1a04d22bb4931a7f05809e2e61298c8c7283ba874559bc8",
-            "from": "0x0000000000000000000000000000000000000000",
-            "to": "0xaba7161a7fb69c5d67318945582962451f28b704",
-            "token_id": token_id,
-            "timestamp": "2021-04-30T22:14:05Z",
-            "value": 0.08,
-            "category": "erc721",
-            "block_num": "0xc1c42f",
-            "asset": "BAYC"
-        },
-        {
-            "tx_hash": "0x7a84091e6b8c9f023d6a451e0892837264a9d7010f3c1b8529e8471b02938472",
-            "from": "0xaba7161a7fb69c5d67318945582962451f28b704",
-            "to": "0x71c7656ec7ab88b098defb751b7401b5f6d8976f",
-            "token_id": token_id,
-            "timestamp": "2021-05-02T14:30:12Z",
-            "value": 0.45,
-            "category": "erc721",
-            "block_num": "0xc21a94",
-            "asset": "BAYC"
-        },
-        {
-            "tx_hash": "0x1b92049e8c7f6d5a4321098b7654321a0987654321f0987654321a0987654321",
-            "from": "0x71c7656ec7ab88b098defb751b7401b5f6d8976f",
-            "to": "0xaba7161a7fb69c5d67318945582962451f28b704",
-            "token_id": token_id,
-            "timestamp": "2021-05-03T09:12:00Z",
-            "value": 1.20,
-            "category": "erc721",
-            "block_num": "0xc23b10",
-            "asset": "BAYC"
-        },
-        {
-            "tx_hash": "0x890123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
-            "from": "0xaba7161a7fb69c5d67318945582962451f28b704",
-            "to": "0x71c7656ec7ab88b098defb751b7401b5f6d8976f",
-            "token_id": token_id,
-            "timestamp": "2021-05-03T11:45:30Z",
-            "value": 2.50,
-            "category": "erc721",
-            "block_num": "0xc23c45",
-            "asset": "BAYC"
-        }
-    ]
 
 async def fetch_alchemy_nft_transfers(contract_address: str, token_id: str) -> Dict[str, Any]:
     """
@@ -106,18 +63,7 @@ async def fetch_alchemy_nft_transfers(contract_address: str, token_id: str) -> D
         }
 
     # Check if API key is missing or explicitly placeholder
-    if not api_key or api_key in ["", "your_alchemy_api_key_here"]:
-        # If ALLOW_MOCK_FALLBACK is true or key missing, return clear missing key error or fallback
-        if os.getenv("ALLOW_MOCK_FALLBACK", "true").lower() == "true":
-            return {
-                "success": True,
-                "contract_address": clean_address,
-                "token_id": clean_token_id,
-                "total_transfers_found": 4,
-                "transfers": get_demo_normalized_transfers(clean_address, clean_token_id),
-                "is_fallback_demo": True,
-                "note": "ALCHEMY_API_KEY not configured. Returning normalized demo transfer activity. Configure ALCHEMY_API_KEY in backend/.env for live Ethereum Mainnet data."
-            }
+    if not api_key or api_key in ["your_alchemy_api_key_here", "YOUR_ALCHEMY_API_KEY"]:
         return {
             "success": False,
             "error": "ALCHEMY_API_KEY is missing in backend/.env environment variables.",
@@ -125,130 +71,157 @@ async def fetch_alchemy_nft_transfers(contract_address: str, token_id: str) -> D
         }
 
     target_hex_token_id = to_hex_token_id(clean_token_id)
-    target_dec_token_id = str(int(target_hex_token_id, 16))
+    cache_key = (clean_address.lower(), target_hex_token_id.lower())
+    cached_entry = _transfer_cache.get(cache_key)
+    if cached_entry is not None:
+        cached_at, cached_result = cached_entry
+        if time.monotonic() - cached_at < TRANSFER_CACHE_TTL_SECONDS:
+            _transfer_cache.move_to_end(cache_key)
+            return copy.deepcopy(cached_result)
+        del _transfer_cache[cache_key]
 
     url = f"https://eth-mainnet.g.alchemy.com/v2/{api_key}"
-
-    payload = {
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "alchemy_getAssetTransfers",
-        "params": [
-            {
-                "fromBlock": "0x0",
-                "toBlock": "latest",
-                "contractAddresses": [clean_address],
-                "category": ["erc721", "erc1155"],
-                "withMetadata": True,
-                "excludeZeroValue": False,
-                "maxCount": "0x3e8"
-            }
-        ]
+    params = {
+        "fromBlock": "0x0",
+        "toBlock": "latest",
+        "contractAddresses": [clean_address],
+        "category": ["erc721", "erc1155"],
+        "withMetadata": True,
+        "excludeZeroValue": False,
+        "maxCount": hex(TRANSFER_PAGE_SIZE),
+        "order": "asc"
     }
+    normalized_transfers = []
+    raw_transfer_count = 0
+    pages_scanned = 0
+    history_complete = False
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(url, json=payload)
-            
-            if response.status_code in [401, 403]:
-                if os.getenv("ALLOW_MOCK_FALLBACK", "true").lower() == "true":
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for page_number in range(1, MAX_TRANSFER_PAGES + 1):
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": page_number,
+                    "method": "alchemy_getAssetTransfers",
+                    "params": [params]
+                }
+                response = await client.post(url, json=payload)
+                print(f"[Onyx] Alchemy alchemy_getAssetTransfers HTTP {response.status_code}")
+
+                if response.status_code in [401, 403]:
+                    return {"success": False, "error": "Alchemy API request unauthorized. Check ALCHEMY_API_KEY.", "code": "UNAUTHORIZED"}
+                if response.status_code == 429:
                     return {
-                        "success": True,
-                        "contract_address": clean_address,
-                        "token_id": clean_token_id,
-                        "total_transfers_found": 4,
-                        "transfers": get_demo_normalized_transfers(clean_address, clean_token_id),
-                        "is_fallback_demo": True,
-                        "note": f"Alchemy API Key unauthorized (401). Displaying normalized demo blockchain transfer activity for test contract {clean_address}."
+                        "success": False,
+                        "error": "Alchemy returned HTTP 429. Wait for the rate window to reset or check your Alchemy dashboard for an exhausted usage limit.",
+                        "code": "RATE_LIMITED"
                     }
-                return {
-                    "success": False,
-                    "error": "Alchemy API request unauthorized. Please check ALCHEMY_API_KEY.",
-                    "code": "UNAUTHORIZED"
-                }
+                if response.status_code != 200:
+                    return {"success": False, "error": f"Alchemy API returned HTTP {response.status_code}.", "code": "ALCHEMY_HTTP_ERROR"}
 
-            if response.status_code == 429:
-                if os.getenv("ALLOW_MOCK_FALLBACK", "true").lower() == "true":
-                    return {
-                        "success": True,
-                        "contract_address": clean_address,
-                        "token_id": clean_token_id,
-                        "total_transfers_found": 4,
-                        "transfers": get_demo_normalized_transfers(clean_address, clean_token_id),
-                        "is_fallback_demo": True,
-                        "note": f"Alchemy rate limit (429) hit. Displaying normalized demo blockchain transfer activity for test contract {clean_address}."
-                    }
-                return {
-                    "success": False,
-                    "error": "Alchemy API rate limit exceeded. Please try again shortly.",
-                    "code": "RATE_LIMITED"
-                }
+                try:
+                    rpc_response = response.json()
+                except ValueError:
+                    return {"success": False, "error": "Alchemy returned malformed JSON.", "code": "MALFORMED_RESPONSE"}
 
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Alchemy API returned HTTP {response.status_code}: {response.text}",
-                    "code": "ALCHEMY_HTTP_ERROR"
-                }
+                if not isinstance(rpc_response, dict):
+                    return {"success": False, "error": "Alchemy returned an invalid response object.", "code": "MALFORMED_RESPONSE"}
+                if "error" in rpc_response:
+                    rpc_error = rpc_response.get("error")
+                    rpc_code = rpc_error.get("code") if isinstance(rpc_error, dict) else "unknown"
+                    rpc_message = rpc_error.get("message", "") if isinstance(rpc_error, dict) else ""
+                    if str(rpc_code) == "429" or any(
+                        limit_term in rpc_message.lower()
+                        for limit_term in ("rate limit", "quota", "credits exceeded", "capacity exceeded")
+                    ):
+                        return {
+                            "success": False,
+                            "error": "Alchemy reported a rate or usage limit. Wait for the rate window to reset or check your Alchemy dashboard usage.",
+                            "code": "RATE_LIMITED"
+                        }
+                    return {"success": False, "error": f"Alchemy RPC request failed (code {rpc_code}).", "code": "RPC_ERROR"}
 
-            rpc_response = response.json()
-            if "error" in rpc_response:
-                rpc_err = rpc_response["error"]
-                return {
-                    "success": False,
-                    "error": f"Alchemy RPC Error ({rpc_err.get('code', 'N/A')}): {rpc_err.get('message', 'Unknown error')}",
-                    "code": "RPC_ERROR"
-                }
+                result = rpc_response.get("result")
+                if not isinstance(result, dict) or not isinstance(result.get("transfers"), list):
+                    return {"success": False, "error": "Alchemy response is missing the transfers list.", "code": "MALFORMED_RESPONSE"}
 
-            raw_transfers = rpc_response.get("result", {}).get("transfers", [])
+                raw_transfers = result["transfers"]
+                pages_scanned += 1
+                raw_transfer_count += len(raw_transfers)
+                if raw_transfers and pages_scanned == 1:
+                    print(f"[Onyx] Alchemy first-record fields: {sorted(raw_transfers[0].keys()) if isinstance(raw_transfers[0], dict) else []}")
+                print(f"[Onyx] Alchemy page {pages_scanned}: {len(raw_transfers)} raw records")
 
-            filtered_transfers = []
-            for tx in raw_transfers:
-                erc1155_metadata = tx.get("erc1155Metadata")
-                tx_token_id = None
-                
-                if erc1155_metadata and isinstance(erc1155_metadata, list):
-                    for meta in erc1155_metadata:
-                        tx_token_id = meta.get("tokenId")
-                        if tx_token_id:
+                for tx in raw_transfers:
+                    if not isinstance(tx, dict):
+                        return {"success": False, "error": "Alchemy returned a malformed transfer record.", "code": "MALFORMED_RESPONSE"}
+
+                    token_ids = [tx.get("tokenId"), tx.get("erc721TokenId")]
+                    erc1155_metadata = tx.get("erc1155Metadata")
+                    if erc1155_metadata is not None:
+                        if not isinstance(erc1155_metadata, list):
+                            return {"success": False, "error": "Alchemy returned malformed ERC-1155 metadata.", "code": "MALFORMED_RESPONSE"}
+                        token_ids.extend(
+                            item.get("tokenId")
+                            for item in erc1155_metadata
+                            if isinstance(item, dict)
+                        )
+
+                    matches_token = False
+                    for raw_token_id in token_ids:
+                        if raw_token_id is None or not validate_token_id(str(raw_token_id)):
+                            continue
+                        if to_hex_token_id(str(raw_token_id)).lower() == target_hex_token_id.lower():
+                            matches_token = True
                             break
-                if not tx_token_id:
-                    tx_token_id = tx.get("tokenId")
 
-                if tx_token_id:
-                    tx_token_hex = to_hex_token_id(str(tx_token_id)) if validate_token_id(str(tx_token_id)) else str(tx_token_id)
-                    tx_token_dec = str(int(tx_token_hex, 16)) if tx_token_hex.startswith("0x") else str(tx_token_id)
-                    
-                    if (tx_token_hex == target_hex_token_id or 
-                        tx_token_dec == target_dec_token_id or 
-                        str(tx_token_id).strip() == clean_token_id):
-                        filtered_transfers.append(tx)
-                else:
-                    filtered_transfers.append(tx)
+                    if not matches_token:
+                        continue
 
-            normalized_transfers = []
-            for tx in filtered_transfers:
-                meta = tx.get("metadata", {})
-                normalized_transfers.append({
-                    "tx_hash": tx.get("hash", ""),
-                    "from": tx.get("from", ""),
-                    "to": tx.get("to", ""),
-                    "token_id": clean_token_id,
-                    "timestamp": meta.get("blockTimestamp", ""),
-                    "value": tx.get("value"),
-                    "category": tx.get("category", "erc721"),
-                    "block_num": tx.get("blockNum", ""),
-                    "asset": tx.get("asset", "")
-                })
+                    metadata = tx.get("metadata")
+                    timestamp = metadata.get("blockTimestamp") if isinstance(metadata, dict) else None
+                    normalized_transfers.append({
+                        "tx_hash": tx.get("hash"),
+                        "from": tx.get("from"),
+                        "to": tx.get("to"),
+                        "token_id": clean_token_id,
+                        "timestamp": timestamp,
+                        "value": None,
+                        "category": tx.get("category"),
+                        "block_num": tx.get("blockNum"),
+                        "asset": tx.get("asset")
+                    })
 
-            return {
-                "success": True,
-                "contract_address": clean_address,
-                "token_id": clean_token_id,
-                "total_transfers_found": len(normalized_transfers),
-                "transfers": normalized_transfers,
-                "note": "Normalized raw blockchain transfer activity retrieved from Alchemy Ethereum Mainnet. Transfers are not auto-classified as sales."
-            }
+                page_key = result.get("pageKey")
+                if page_key in (None, ""):
+                    history_complete = True
+                    break
+                if not isinstance(page_key, str):
+                    return {"success": False, "error": "Alchemy returned an invalid pagination cursor.", "code": "MALFORMED_RESPONSE"}
+                params["pageKey"] = page_key
+
+        print(f"[Onyx] Alchemy normalized record count: {len(normalized_transfers)}")
+        if history_complete:
+            note = "Complete normalized NFT transfer history retrieved from Alchemy Ethereum Mainnet. Transfer values are not sale prices."
+        else:
+            note = f"Partial history: scanned {pages_scanned} pages ({raw_transfer_count} collection transfers); Alchemy reported more pages. Results may omit older or newer activity. Transfer values are not sale prices."
+
+        result = {
+            "success": True,
+            "contract_address": clean_address,
+            "token_id": clean_token_id,
+            "total_transfers_found": len(normalized_transfers),
+            "raw_transfers_scanned": raw_transfer_count,
+            "pages_scanned": pages_scanned,
+            "history_complete": history_complete,
+            "transfers": normalized_transfers,
+            "note": note
+        }
+        _transfer_cache[cache_key] = (time.monotonic(), copy.deepcopy(result))
+        _transfer_cache.move_to_end(cache_key)
+        while len(_transfer_cache) > TRANSFER_CACHE_MAX_ENTRIES:
+            _transfer_cache.popitem(last=False)
+        return result
 
     except httpx.TimeoutException:
         return {
@@ -256,9 +229,15 @@ async def fetch_alchemy_nft_transfers(contract_address: str, token_id: str) -> D
             "error": "Timeout while connecting to Alchemy API.",
             "code": "TIMEOUT"
         }
-    except Exception as e:
+    except httpx.RequestError:
         return {
             "success": False,
-            "error": f"Network or unexpected error while calling Alchemy: {str(e)}",
+            "error": "Network failure while connecting to Alchemy API.",
+            "code": "NETWORK_ERROR"
+        }
+    except Exception:
+        return {
+            "success": False,
+            "error": "Unexpected error while processing the Alchemy response.",
             "code": "INTERNAL_ERROR"
         }

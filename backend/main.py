@@ -13,7 +13,7 @@ from gemini import generate_gemini_explanation
 
 load_dotenv()
 
-app = FastAPI(title="WashGuard API", version="1.0.0")
+app = FastAPI(title="Onyx API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +41,7 @@ class AnalyzeRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "service": "WashGuard"
+        "service": "Onyx"
     }
 
 @app.post("/analyze")
@@ -67,7 +67,7 @@ async def analyze(req: AnalyzeRequest):
             status_code = status.HTTP_401_UNAUTHORIZED
         elif error_code == "RATE_LIMITED":
             status_code = status.HTTP_429_TOO_MANY_REQUESTS
-        elif error_code in ["TIMEOUT", "INTERNAL_ERROR", "ALCHEMY_HTTP_ERROR"]:
+        elif error_code in ["TIMEOUT", "NETWORK_ERROR", "INTERNAL_ERROR", "ALCHEMY_HTTP_ERROR", "RPC_ERROR", "MALFORMED_RESPONSE"]:
             status_code = status.HTTP_502_BAD_GATEWAY
 
         raise HTTPException(status_code=status_code, detail=f"[{error_code}] {error_msg}")
@@ -98,6 +98,9 @@ async def analyze(req: AnalyzeRequest):
         "contract_address": alchemy_result["contract_address"],
         "token_id": alchemy_result["token_id"],
         "total_transfers_found": alchemy_result["total_transfers_found"],
+        "raw_transfers_scanned": alchemy_result.get("raw_transfers_scanned", 0),
+        "pages_scanned": alchemy_result.get("pages_scanned", 0),
+        "history_complete": alchemy_result.get("history_complete", True),
         "risk_score": detection_result["risk_score"],
         "risk_level": detection_result["risk_level"],
         "signals": detection_result["signals"],

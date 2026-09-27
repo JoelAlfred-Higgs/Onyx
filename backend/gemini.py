@@ -3,8 +3,8 @@ import json
 import httpx
 from typing import Dict, Any, Optional
 
-SYSTEM_INSTRUCTION = """You are the explanation assistant for WashGuard, an NFT wash-trading risk analysis application.
-Your job is to explain the structured blockchain analysis provided by the WashGuard detection engine.
+SYSTEM_INSTRUCTION = """You are the explanation assistant for Onyx, an NFT wash-trading risk analysis application.
+Your job is to explain the structured blockchain analysis provided by the Onyx detection engine.
 You must only use the evidence supplied to you.
 Do not invent facts, wallet addresses, hashes, or prices.
 Do not calculate or modify the risk score.
@@ -45,7 +45,7 @@ def generate_fallback_ai_explanation(detection_data: Dict[str, Any]) -> Dict[str
         findings.append("No suspicious wash trading signals detected across evaluated transactions.")
 
     return {
-        "summary": f"WashGuard evaluated this NFT contract and token ID, assigning a deterministic risk score of {score}/100 ({level}). This assessment is derived strictly from on-chain transfer topology and market context.",
+        "summary": f"Onyx evaluated this NFT contract and token ID, assigning a deterministic risk score of {score}/100 ({level}). This assessment is derived strictly from on-chain transfer topology and market context.",
         "key_findings": findings,
         "limitations": [
             "On-chain heuristic patterns indicate potential wash trading risk but do not constitute legal proof or confirmed physical wallet ownership.",
@@ -121,42 +121,42 @@ async def generate_gemini_explanation(detection_data: Dict[str, Any]) -> Optiona
                         res_json = response.json()
                         candidates = res_json.get("candidates", [])
                         if not candidates:
-                            print(f"[WashGuard] {model}: returned no candidates.")
+                            print(f"[Onyx] {model}: returned no candidates.")
                             continue
 
                         text_content = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
                         if not text_content:
-                            print(f"[WashGuard] {model}: returned empty text.")
+                            print(f"[Onyx] {model}: returned empty text.")
                             continue
 
                         parsed_explanation = json.loads(text_content)
                         parsed_explanation["is_fallback_mode"] = False
-                        print(f"[WashGuard] Gemini explanation generated successfully via {model}.")
+                        print(f"[Onyx] Gemini explanation generated successfully via {model}.")
                         return parsed_explanation
 
                     elif response.status_code in [503, 429]:
-                        print(f"[WashGuard] {model}: HTTP {response.status_code} (overloaded/rate-limited), trying next model...")
+                        print(f"[Onyx] {model}: HTTP {response.status_code} (overloaded/rate-limited), trying next model...")
                         last_error = f"{model} returned HTTP {response.status_code}"
                         continue
                     else:
-                        print(f"[WashGuard] {model}: HTTP {response.status_code}: {response.text[:150]}")
+                        print(f"[Onyx] {model}: HTTP {response.status_code}: {response.text[:150]}")
                         last_error = f"{model} returned HTTP {response.status_code}"
                         continue
 
                 except Exception as model_err:
-                    print(f"[WashGuard] {model}: exception {type(model_err).__name__}: {model_err}")
+                    print(f"[Onyx] {model}: exception {type(model_err).__name__}: {model_err}")
                     last_error = str(model_err)
                     continue
 
             # All models exhausted
-            print(f"[WashGuard] All Gemini models exhausted. Last error: {last_error}")
+            print(f"[Onyx] All Gemini models exhausted. Last error: {last_error}")
             if os.getenv("ALLOW_MOCK_FALLBACK", "true").lower() == "true":
                 return generate_fallback_ai_explanation(detection_data)
             return None
 
     except Exception as e:
         # Gracefully handle network / parsing / timeout errors without breaking API response
-        print(f"[WashGuard] Gemini API exception: {type(e).__name__}: {e}")
+        print(f"[Onyx] Gemini API exception: {type(e).__name__}: {e}")
         if os.getenv("ALLOW_MOCK_FALLBACK", "true").lower() == "true":
             return generate_fallback_ai_explanation(detection_data)
         return None
