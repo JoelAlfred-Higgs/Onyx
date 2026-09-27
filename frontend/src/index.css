@@ -468,6 +468,7 @@ body {
 .quote-mark-inline {
   margin-left: 0.15rem;
   vertical-align: 0.05em;
+  font-size: calc(var(--quote-size) * 0.88);
 }
 
 .quote-lockup p {
@@ -917,6 +918,23 @@ body {
 
 .results-area {
   margin-top: 1rem;
+}
+
+@keyframes graph-flow {
+  to { stroke-dashoffset: -22; }
+}
+
+@keyframes wallet-node-pulse {
+  0%, 100% { opacity: 0.12; transform: scale(0.94); }
+  50% { opacity: 0.34; transform: scale(1.08); }
+}
+
+.wallet-node-pulse {
+  fill: none;
+  stroke: #1a8a6b;
+  stroke-width: 1.5;
+  pointer-events: none;
+  animation: wallet-node-pulse 2.4s ease-in-out infinite;
 }
 
 .badge-dev {

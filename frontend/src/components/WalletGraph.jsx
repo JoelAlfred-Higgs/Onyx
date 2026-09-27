@@ -65,17 +65,23 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
     const nodes = Array.from(nodeMap.values());
     const count = nodes.length;
 
-    // Calculate circular layout positions
+    nodes.forEach((node, index) => {
+      node.displayLabel = node.isMint ? 'Mint' : `Wallet ${index + 1}`;
+    });
+
+    // Arrange wallets in a two-row map so transaction direction is easier to follow.
     const width = 650;
     const height = 360;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(width, height) * 0.35;
+    const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(count))));
+    const columnGap = columns > 1 ? 500 / (columns - 1) : 0;
 
     nodes.forEach((node, i) => {
-      const angle = (i / count) * 2 * Math.PI - Math.PI / 2;
-      node.x = centerX + radius * Math.cos(angle);
-      node.y = centerY + radius * Math.sin(angle);
+      const row = Math.floor(i / columns);
+      const column = i % columns;
+      const rowCount = Math.min(columns, count - row * columns);
+      const rowOffset = rowCount < columns ? (columns - rowCount) * columnGap / 2 : 0;
+      node.x = 75 + column * columnGap + rowOffset;
+      node.y = row % 2 === 0 ? 105 : 255;
     });
 
     return { nodes, edges: edgeList, width, height };
@@ -110,24 +116,24 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
           gap: '0.75rem',
           marginBottom: '1rem',
           fontSize: '0.8rem',
-          color: 'var(--text-secondary)',
+          color: '#374151',
         }}
       >
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#1a8a6b', display: 'inline-block' }}></span>
-            Standard Wallet
+            Normal wallet
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 6px #ef4444' }}></span>
-            Circular / Wash Pair
+            Suspicious loop
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#64748b', display: 'inline-block' }}></span>
-            Mint / Null Address
+            Mint / unknown
           </span>
         </div>
-        <span style={{ color: 'var(--text-muted)' }}>Click any wallet node to inspect evidence</span>
+        <span style={{ color: '#374151', fontWeight: '600' }}>Follow arrows from sender to receiver. Click a wallet for evidence.</span>
       </div>
 
       {/* Interactive SVG Network Graph */}
@@ -146,6 +152,10 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
           style={{ width: '100%', height: 'auto', maxHeight: '400px' }}
         >
           <defs>
+            <pattern id="graph-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+              <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#1a8a6b" strokeOpacity=".08" strokeWidth="1" />
+            </pattern>
+
             {/* Standard Cyan Arrow Marker */}
             <marker
               id="arrow-cyan"
@@ -186,6 +196,10 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
             </marker>
           </defs>
 
+          <rect width={graphData.width} height={graphData.height} fill="url(#graph-grid)" opacity=".7" />
+          <text x="24" y="32" fill="#1a8a6b" fontSize="11" fontFamily="var(--font-mono)" fontWeight="700" letterSpacing="1.5">WALLET TRANSACTION CIRCUIT</text>
+          <text x="24" y="348" fill="#5a6b7a" fontSize="10" fontFamily="var(--font-mono)">LIVE FLOW</text>
+
           {/* Render Edges */}
           {graphData.edges.map((edge) => {
             const sourceNode = getNode(edge.source);
@@ -195,28 +209,68 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
             const isSelected = selectedNode && (edge.source === selectedNode || edge.target === selectedNode);
             const isHovered = hoveredEdge === edge.id || hoveredNode === edge.source || hoveredNode === edge.target;
             const isCircularEdge = sourceNode.isCircular && targetNode.isCircular;
-
-            // Compute curved arc for directed edges
-            const dx = targetNode.x - sourceNode.x;
-            const dy = targetNode.y - sourceNode.y;
-            const dr = Math.sqrt(dx * dx + dy * dy) * 1.2;
+            const reverseEdge = graphData.edges.find(
+              (candidate) => candidate.source === edge.target && candidate.target === edge.source && candidate.id !== edge.id
+            );
+            const edgeIndex = Number(edge.id.replace('edge-', ''));
+            const reverseEdgeIndex = reverseEdge ? Number(reverseEdge.id.replace('edge-', '')) : null;
 
             const strokeColor = isHovered || isSelected ? '#d97706' : isCircularEdge ? '#ef4444' : '#1a8a6b';
             const markerId = isHovered || isSelected ? 'url(#arrow-amber)' : isCircularEdge ? 'url(#arrow-red)' : 'url(#arrow-cyan)';
-            const strokeWidth = isHovered || isSelected ? 3 : isCircularEdge ? 2.5 : 1.5;
+            const strokeWidth = isHovered || isSelected ? 3 : isCircularEdge ? 3 : 1.8;
+            const midpointX = (sourceNode.x + targetNode.x) / 2;
+            const midpointY = (sourceNode.y + targetNode.y) / 2;
+            const bend = reverseEdge
+              ? edgeIndex < reverseEdgeIndex ? -64 : 64
+              : 0;
+            const dx = targetNode.x - sourceNode.x;
+            const dy = targetNode.y - sourceNode.y;
+            const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+            const perpendicularX = -dy / distance;
+            const perpendicularY = dx / distance;
+            const controlX = midpointX + perpendicularX * bend;
+            const controlY = midpointY + perpendicularY * bend;
+            const edgePath = `M ${sourceNode.x} ${sourceNode.y} Q ${controlX} ${controlY} ${targetNode.x} ${targetNode.y}`;
 
             return (
               <g key={edge.id} onMouseEnter={() => setHoveredEdge(edge.id)} onMouseLeave={() => setHoveredEdge(null)}>
+                <path
+                  d={edgePath}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth="18"
+                  style={{ cursor: 'pointer' }}
+                />
                 {/* Directed Edge Line */}
                 <path
-                  d={`M ${sourceNode.x} ${sourceNode.y} A ${dr} ${dr} 0 0 1 ${targetNode.x} ${targetNode.y}`}
+                  d={edgePath}
                   fill="none"
                   stroke={strokeColor}
                   strokeWidth={strokeWidth}
-                  strokeDasharray={isCircularEdge ? 'none' : '4,2'}
-                  markerEnd={markerId}
-                  style={{ transition: 'all 0.2s ease', cursor: 'pointer' }}
+                  strokeDasharray={isCircularEdge ? 'none' : '7,4'}
+                  markerEnd={reverseEdge ? undefined : markerId}
+                  style={{
+                    transition: 'all 0.2s ease',
+                    pointerEvents: 'none',
+                    animation: isCircularEdge || isHovered || isSelected ? 'graph-flow 1.2s linear infinite' : 'graph-flow 2.8s linear infinite',
+                  }}
                 />
+                <path
+                  d="M -8 -5 L 2 0 L -8 5"
+                  fill="none"
+                  stroke={isCircularEdge ? '#ef4444' : '#f7b955'}
+                  strokeWidth={isHovered || isSelected ? 3 : 2.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={isHovered || isSelected ? 1 : 0.9}
+                >
+                  <animateMotion
+                    dur={isCircularEdge ? '1.4s' : '2.6s'}
+                    repeatCount="indefinite"
+                    path={edgePath}
+                    rotate="auto"
+                  />
+                </path>
               </g>
             );
           })}
@@ -250,25 +304,40 @@ export default function WalletGraph({ transfers = [], signals = [] }) {
                   </circle>
                 )}
 
-                {/* Node Circle */}
-                <circle
-                  r={radius}
-                  fill={fillColor}
+                {!isSelected && !node.isCircular && (
+                  <circle r={radius + 4} className="wallet-node-pulse" />
+                )}
+
+                {/* Wallet status card */}
+                <rect
+                  x="-58"
+                  y="-23"
+                  width="116"
+                  height="46"
+                  rx="13"
+                  fill="#ffffff"
+                  fillOpacity=".96"
                   stroke={strokeColor}
                   strokeWidth={isSelected ? 3 : 2}
                   style={{ transition: 'all 0.2s ease' }}
                 />
+                <circle cx="-41" cy="0" r="9" fill={fillColor} />
+                <circle cx="-41" cy="0" r="4" fill="#ffffff" fillOpacity=".9" />
 
                 {/* Node Text Label */}
                 <text
-                  y={radius + 14}
-                  fill={isSelected ? '#d97706' : isHovered ? '#1a2332' : '#5a6b7a'}
+                  x="-26"
+                  y="4"
+                  fill={isSelected ? '#b45309' : '#1a2332'}
                   fontSize="11"
                   fontFamily="var(--font-mono)"
-                  fontWeight={isSelected || isHovered ? '700' : '500'}
+                  fontWeight="800"
                   textAnchor="middle"
                 >
-                  {node.label}
+                  {node.displayLabel}
+                </text>
+                <text x="-26" y="17" fill="#8a9baa" fontSize="8" fontFamily="var(--font-mono)">
+                  {node.isMint ? 'ORIGIN' : node.isCircular ? 'FLAGGED LOOP' : `${node.txCount} TRANSFER${node.txCount === 1 ? '' : 'S'}`}
                 </text>
               </g>
             );
